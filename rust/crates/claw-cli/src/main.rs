@@ -1,3 +1,4 @@
+mod api_selector;
 mod init;
 mod input;
 mod render;
@@ -69,6 +70,15 @@ Run `claw --help` for usage."
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // Check if API is configured, if not show interactive selector
+    if !api_selector::has_existing_config() {
+        if let Some(provider) = api_selector::select_provider_interactive() {
+            provider.apply_to_env();
+            println!("\x1b[2mAPI configuration applied for this session.\x1b[0m");
+            println!();
+        }
+    }
+
     let args: Vec<String> = env::args().skip(1).collect();
     match parse_args(&args)? {
         CliAction::DumpManifests => dump_manifests(),
@@ -947,12 +957,13 @@ fn run_resume_command(
         | SlashCommand::Issue { .. }
         | SlashCommand::Ultraplan { .. }
         | SlashCommand::Teleport { .. }
-        | SlashCommand::DebugToolCall
-        | SlashCommand::Resume { .. }
+| SlashCommand::DebugToolCall
+| SlashCommand::Resume { .. }
         | SlashCommand::Model { .. }
         | SlashCommand::Permissions { .. }
         | SlashCommand::Session { .. }
         | SlashCommand::Plugins { .. }
+        | SlashCommand::Hook { .. }
         | SlashCommand::Unknown(_) => Err("unsupported resumed slash command".into()),
     }
 }
@@ -1255,6 +1266,10 @@ impl LiveCli {
             }
             SlashCommand::CommitPushPr { .. } => {
                 eprintln!("commit-push-pr not yet wired to REPL");
+                false
+            }
+            SlashCommand::Hook { .. } => {
+                eprintln!("hook commands not yet wired to REPL");
                 false
             }
             SlashCommand::Unknown(name) => {

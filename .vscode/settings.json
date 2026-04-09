@@ -1,0 +1,57 @@
+{
+	"rust-analyzer.linkedProjects": [
+		{
+			"sysroot": "",
+			"crates": [
+				{
+					"root_module": "rust\\target\\debug\\build\\typenum-5c920030fb6fcbb3\\out\\tests.rs",
+					"display_name": "rust_target_debug_build_typenum-5c920030fb6fcbb3_out_tests",
+					"edition": "2021",
+					"deps": []
+				},
+				{
+					"root_module": "rust\\target\\debug\\build\\thiserror-caa5ad188db9d66b\\out\\private.rs",
+					"display_name": "rust_target_debug_build_thiserror-caa5ad188db9d66b_out_private",
+					"edition": "2021",
+					"deps": []
+				},
+				{
+					"root_module": "rust\\target\\debug\\build\\serde-afe1acbcc42b1940\\out\\private.rs",
+					"display_name": "rust_target_debug_build_serde-afe1acbcc42b1940_out_private",
+					"edition": "2021",
+					"deps": []
+				},
+				{
+					"root_module": "rust\\target\\debug\\build\\serde_core-b2813be2f81d8a0f\\out\\private.rs",
+					"display_name": "rust_target_debug_build_serde_core-b2813be2f81d8a0f_out_private",
+					"edition": "2021",
+					"deps": []
+				},
+				{
+					"root_module": "rust\\target\\debug\\build\\serde_core-b2813be2f81d8a0f\\out\\private.rs",
+					"display_name": "rust_target_debug_build_serde_core-b2813be2f81d8a0f_out_private",
+					"edition": "2021",
+					"deps": []
+				},
+				{
+					"root_module": "rust\\target\\debug\\build\\serde-afe1acbcc42b1940\\out\\private.rs",
+					"display_name": "rust_target_debug_build_serde-afe1acbcc42b1940_out_private",
+					"edition": "2021",
+					"deps": []
+				},
+				{
+					"root_module": "rust\\target\\debug\\build\\typenum-5c920030fb6fcbb3\\out\\tests.rs",
+					"display_name": "rust_target_debug_build_typenum-5c920030fb6fcbb3_out_tests",
+					"edition": "2021",
+					"deps": []
+				},
+				{
+					"root_module": "rust\\target\\debug\\build\\thiserror-caa5ad188db9d66b\\out\\private.rs",
+					"display_name": "rust_target_debug_build_thiserror-caa5ad188db9d66b_out_private",
+					"edition": "2021",
+					"deps": []
+				}
+			]
+		}
+	]
+}

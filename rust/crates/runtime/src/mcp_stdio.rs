@@ -286,9 +286,9 @@ impl From<io::Error> for McpServerManagerError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ToolRoute {
-    server_name: String,
-    raw_name: String,
+pub struct ToolRoute {
+    pub server_name: String,
+    pub raw_name: String,
 }
 
 #[derive(Debug)]
@@ -320,6 +320,12 @@ impl McpServerManager {
     #[must_use]
     pub fn from_runtime_config(config: &RuntimeConfig) -> Self {
         Self::from_servers(config.mcp().servers())
+    }
+
+    /// 获取工具索引的引用
+    #[must_use]
+    pub fn tool_index(&self) -> &BTreeMap<String, ToolRoute> {
+        &self.tool_index
     }
 
     #[must_use]

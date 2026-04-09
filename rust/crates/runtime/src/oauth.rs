@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
 
@@ -319,17 +319,65 @@ pub fn parse_oauth_callback_query(query: &str) -> Result<OAuthCallbackParams, St
 
 fn generate_random_token(bytes: usize) -> io::Result<String> {
     let mut buffer = vec![0_u8; bytes];
-    File::open("/dev/urandom")?.read_exact(&mut buffer)?;
+    
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(0) // O_RDONLY
+            .open("/dev/urandom")?
+            .read_exact(&mut buffer)?;
+    }
+    
+    #[cfg(windows)]
+    {
+        // Windows: use getrandom via rand crate or fallback
+        // For simplicity, use a combination of sources
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let mut entropy = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos().to_ne_bytes())
+            .unwrap_or_default();
+        let pid = std::process::id().to_ne_bytes();
+        for (i, byte) in buffer.iter_mut().enumerate() {
+            *byte = entropy[i % entropy.len()] ^ pid[i % pid.len()];
+        }
+    }
+    
     Ok(base64url_encode(&buffer))
 }
 
 fn credentials_home_dir() -> io::Result<PathBuf> {
+    // First check explicit override
     if let Some(path) = std::env::var_os("CLAW_CONFIG_HOME") {
         return Ok(PathBuf::from(path));
     }
-    let home = std::env::var_os("HOME")
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is not set"))?;
-    Ok(PathBuf::from(home).join(".claw"))
+    
+    // Try HOME (Unix and some Windows setups)
+    if let Some(home) = std::env::var_os("HOME") {
+        return Ok(PathBuf::from(home).join(".claw"));
+    }
+    
+    // Windows: check USERPROFILE
+    if let Some(userprofile) = std::env::var_os("USERPROFILE") {
+        return Ok(PathBuf::from(userprofile).join(".claw"));
+    }
+    
+    // Windows: check HOMEPATH + HOMEDRIVE
+    if let Some(homepath) = std::env::var_os("HOMEPATH") {
+        let homedrive = std::env::var_os("HOMEDRIVE")
+            .map(|d| d.to_string_lossy().to_string())
+            .unwrap_or_else(|| "C:".to_string());
+        return Ok(PathBuf::from(format!(
+            "{}{}",
+            homedrive,
+            homepath.to_string_lossy()
+        )).join(".claw"));
+    }
+    
+    // Fallback to temp directory
+    Ok(std::env::temp_dir().join(".claw"))
 }
 
 fn read_credentials_root(path: &PathBuf) -> io::Result<Map<String, Value>> {

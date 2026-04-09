@@ -235,10 +235,33 @@ pub fn inherited_upstream_proxy_env(
 }
 
 fn default_ca_bundle_path() -> PathBuf {
-    env::var_os("HOME")
-        .map_or_else(|| PathBuf::from("."), PathBuf::from)
+    home_dir()
         .join(".ccr")
         .join("ca-bundle.crt")
+}
+
+/// Cross-platform home directory resolution
+fn home_dir() -> PathBuf {
+    // First check HOME (Unix and some Windows setups)
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home);
+    }
+    
+    // Windows: check USERPROFILE
+    if let Some(userprofile) = env::var_os("USERPROFILE") {
+        return PathBuf::from(userprofile);
+    }
+    
+    // Windows: check HOMEPATH + HOMEDRIVE
+    if let Some(homepath) = env::var_os("HOMEPATH") {
+        let homedrive = env::var_os("HOMEDRIVE")
+            .map(|d| d.to_string_lossy().to_string())
+            .unwrap_or_else(|| "C:".to_string());
+        return PathBuf::from(format!("{}{}", homedrive, homepath.to_string_lossy()));
+    }
+    
+    // Fallback to current directory
+    PathBuf::from(".")
 }
 
 fn env_truthy(value: Option<&String>) -> bool {

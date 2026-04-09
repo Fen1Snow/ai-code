@@ -1,6 +1,7 @@
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 use serde_json::json;
 
@@ -21,10 +22,26 @@ impl HookEvent {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Hook 执行超时时间（秒）
+const HOOK_TIMEOUT_SECS: u64 = 30;
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HookRunResult {
     denied: bool,
     messages: Vec<String>,
+    modified_input: Option<String>,
+    modified_output: Option<String>,
+    execution_logs: Vec<HookExecutionLog>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookExecutionLog {
+    pub hook_command: String,
+    pub event: HookEvent,
+    pub tool_name: String,
+    pub exit_code: Option<i32>,
+    pub execution_time_ms: u128,
+    pub output: String,
 }
 
 impl HookRunResult {
@@ -33,7 +50,22 @@ impl HookRunResult {
         Self {
             denied: false,
             messages,
+            modified_input: None,
+            modified_output: None,
+            execution_logs: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_modified_input(mut self, modified_input: String) -> Self {
+        self.modified_input = Some(modified_input);
+        self
+    }
+
+    #[must_use]
+    pub fn with_modified_output(mut self, modified_output: String) -> Self {
+        self.modified_output = Some(modified_output);
+        self
     }
 
     #[must_use]
@@ -44,6 +76,21 @@ impl HookRunResult {
     #[must_use]
     pub fn messages(&self) -> &[String] {
         &self.messages
+    }
+
+    #[must_use]
+    pub fn modified_input(&self) -> Option<&str> {
+        self.modified_input.as_deref()
+    }
+
+    #[must_use]
+    pub fn modified_output(&self) -> Option<&str> {
+        self.modified_output.as_deref()
+    }
+
+    #[must_use]
+    pub fn execution_logs(&self) -> &[HookExecutionLog] {
+        &self.execution_logs
     }
 }
 
@@ -116,36 +163,86 @@ impl HookRunner {
         .to_string();
 
         let mut messages = Vec::new();
+        let mut modified_input: Option<String> = None;
+        let mut modified_output: Option<String> = None;
+        let mut execution_logs = Vec::new();
+        let mut current_input = tool_input.to_string();
 
         for command in commands {
+            let start_time = std::time::Instant::now();
             match self.run_command(
                 command,
                 event,
                 tool_name,
-                tool_input,
+                &current_input,
                 tool_output,
                 is_error,
                 &payload,
             ) {
-                HookCommandOutcome::Allow { message } => {
-                    if let Some(message) = message {
-                        messages.push(message);
+                HookCommandOutcome::Allow { message, modified_json } => {
+                    if let Some(ref msg) = message {
+                        messages.push(msg.clone());
                     }
+                    // 处理输入/输出重写
+                    if let Some(json_str) = modified_json {
+                        if event == HookEvent::PreToolUse {
+                            modified_input = Some(json_str.clone());
+                            current_input = json_str;
+                        } else if event == HookEvent::PostToolUse {
+                            modified_output = Some(json_str.clone());
+                        }
+                    }
+                    // 记录执行日志
+                    execution_logs.push(HookExecutionLog {
+                        hook_command: command.to_string(),
+                        event,
+                        tool_name: tool_name.to_string(),
+                        exit_code: Some(0),
+                        execution_time_ms: start_time.elapsed().as_millis(),
+                        output: message.unwrap_or_default(),
+                    });
                 }
                 HookCommandOutcome::Deny { message } => {
+                    execution_logs.push(HookExecutionLog {
+                        hook_command: command.to_string(),
+                        event,
+                        tool_name: tool_name.to_string(),
+                        exit_code: Some(2),
+                        execution_time_ms: start_time.elapsed().as_millis(),
+                        output: message.clone().unwrap_or_default(),
+                    });
                     messages.push(message.unwrap_or_else(|| {
                         format!("{} hook denied tool `{tool_name}`", event.as_str())
                     }));
                     return HookRunResult {
                         denied: true,
                         messages,
+                        modified_input,
+                        modified_output,
+                        execution_logs,
                     };
                 }
-                HookCommandOutcome::Warn { message } => messages.push(message),
+                HookCommandOutcome::Warn { message } => {
+                    execution_logs.push(HookExecutionLog {
+                        hook_command: command.to_string(),
+                        event,
+                        tool_name: tool_name.to_string(),
+                        exit_code: None,
+                        execution_time_ms: start_time.elapsed().as_millis(),
+                        output: message.clone(),
+                    });
+                    messages.push(message)
+                }
             }
         }
 
-        HookRunResult::allow(messages)
+        HookRunResult {
+            denied: false,
+            messages,
+            modified_input,
+            modified_output,
+            execution_logs,
+        }
     }
 
     #[allow(clippy::too_many_arguments, clippy::unused_self)]
@@ -171,33 +268,51 @@ impl HookRunner {
             child.env("HOOK_TOOL_OUTPUT", tool_output);
         }
 
-        match child.output_with_stdin(payload.as_bytes()) {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                let message = (!stdout.is_empty()).then_some(stdout);
-                match output.status.code() {
-                    Some(0) => HookCommandOutcome::Allow { message },
-                    Some(2) => HookCommandOutcome::Deny { message },
-                    Some(code) => HookCommandOutcome::Warn {
-                        message: format_hook_warning(
-                            command,
-                            code,
-                            message.as_deref(),
-                            stderr.as_str(),
-                        ),
-                    },
-                    None => HookCommandOutcome::Warn {
-                        message: format!(
-                            "{} hook `{command}` terminated by signal while handling `{tool_name}`",
-                            event.as_str()
-                        ),
-                    },
-                }
+        // 设置超时
+        let output = match child.output_with_stdin_timeout(payload.as_bytes(), Duration::from_secs(HOOK_TIMEOUT_SECS)) {
+            Ok(output) => output,
+            Err(_) => {
+                return HookCommandOutcome::Warn {
+                    message: format!(
+                        "{} hook `{command}` timed out after {}s for `{tool_name}`",
+                        event.as_str(),
+                        HOOK_TIMEOUT_SECS
+                    ),
+                };
             }
-            Err(error) => HookCommandOutcome::Warn {
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        
+        // 检查是否有修改后的 JSON 输出（以 MODIFIED_JSON: 开头）
+        let (message, modified_json) = if stdout.starts_with("MODIFIED_JSON:") {
+            let lines: Vec<&str> = stdout.splitn(2, '\n').collect();
+            let json_str = lines.get(1).unwrap_or(&"{}").trim().to_string();
+            let msg = if lines.len() > 1 && !lines[0].trim().is_empty() {
+                Some(lines[0].trim().to_string())
+            } else {
+                None
+            };
+            (msg, Some(json_str))
+        } else {
+            ((!stdout.is_empty()).then_some(stdout), None)
+        };
+
+        match output.status.code() {
+            Some(0) => HookCommandOutcome::Allow { message, modified_json },
+            Some(2) => HookCommandOutcome::Deny { message },
+            Some(code) => HookCommandOutcome::Warn {
+                message: format_hook_warning(
+                    command,
+                    code,
+                    message.as_deref(),
+                    stderr.as_str(),
+                ),
+            },
+            None => HookCommandOutcome::Warn {
                 message: format!(
-                    "{} hook `{command}` failed to start for `{tool_name}`: {error}",
+                    "{} hook `{command}` terminated by signal while handling `{tool_name}`",
                     event.as_str()
                 ),
             },
@@ -206,7 +321,10 @@ impl HookRunner {
 }
 
 enum HookCommandOutcome {
-    Allow { message: Option<String> },
+    Allow {
+        message: Option<String>,
+        modified_json: Option<String>,
+    },
     Deny { message: Option<String> },
     Warn { message: String },
 }
@@ -283,6 +401,7 @@ impl CommandWithStdin {
         self
     }
 
+    #[allow(dead_code)]
     fn output_with_stdin(&mut self, stdin: &[u8]) -> std::io::Result<std::process::Output> {
         let mut child = self.command.spawn()?;
         if let Some(mut child_stdin) = child.stdin.take() {
@@ -290,6 +409,35 @@ impl CommandWithStdin {
             child_stdin.write_all(stdin)?;
         }
         child.wait_with_output()
+    }
+
+    fn output_with_stdin_timeout(
+        &mut self,
+        stdin: &[u8],
+        timeout: Duration,
+    ) -> std::io::Result<std::process::Output> {
+        let mut child = self.command.spawn()?;
+        if let Some(mut child_stdin) = child.stdin.take() {
+            use std::io::Write as _;
+            child_stdin.write_all(stdin)?;
+        }
+
+        // 使用简单超时机制
+        let start = std::time::Instant::now();
+        loop {
+            if child.try_wait()?.is_some() {
+                return child.wait_with_output();
+            }
+            if start.elapsed() > timeout {
+                // 超时，杀死进程
+                let _ = child.kill();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("Command timed out after {}s", timeout.as_secs()),
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 }
 

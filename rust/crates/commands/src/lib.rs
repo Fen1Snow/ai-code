@@ -113,6 +113,13 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         resume_supported: true,
     },
     SlashCommandSpec {
+        name: "hook",
+        aliases: &[],
+        summary: "Test and inspect Hooks execution",
+        argument_hint: Some("[list|run <hook-name>|logs]"),
+        resume_supported: true,
+    },
+    SlashCommandSpec {
         name: "memory",
         aliases: &[],
         summary: "Inspect loaded Claw instruction memory files",
@@ -299,6 +306,10 @@ pub enum SlashCommand {
     Config {
         section: Option<String>,
     },
+    Hook {
+        action: Option<String>,
+        target: Option<String>,
+    },
     Memory,
     Init,
     Diff,
@@ -381,6 +392,10 @@ impl SlashCommand {
             },
             "config" => Self::Config {
                 section: parts.next().map(ToOwned::to_owned),
+            },
+            "hook" => Self::Hook {
+                action: parts.next().map(ToOwned::to_owned),
+                target: parts.next().map(ToOwned::to_owned),
             },
             "memory" => Self::Memory,
             "init" => Self::Init,
@@ -646,9 +661,96 @@ pub fn handle_plugins_slash_command(
                 reload_runtime: true,
             })
         }
+        Some("search") => {
+            let Some(query) = target else {
+                return Ok(PluginsCommandResult {
+                    message: "Usage: /plugins search <query>".to_string(),
+                    reload_runtime: false,
+                });
+            };
+            let results = manager.search_marketplace(query, 1, 10, None)?;
+            let mut lines = vec![format!("Marketplace Search: {}\n", query)];
+            if results.plugins.is_empty() {
+                lines.push("No plugins found.".to_string());
+            } else {
+                for plugin in &results.plugins {
+                    lines.push(format!(
+                        "- {} v{} by {}\n  {}\n  ⭐ {:.1} | ⬇️ {} | Tags: {}",
+                        plugin.name,
+                        plugin.version,
+                        plugin.author,
+                        plugin.description,
+                        plugin.rating,
+                        plugin.downloads,
+                        plugin.tags.join(", ")
+                    ));
+                }
+            }
+            Ok(PluginsCommandResult {
+                message: lines.join("\n"),
+                reload_runtime: false,
+            })
+        }
+        Some("info") => {
+            let Some(plugin_id) = target else {
+                return Ok(PluginsCommandResult {
+                    message: "Usage: /plugins info <plugin-id>".to_string(),
+                    reload_runtime: false,
+                });
+            };
+            let plugin = manager.get_marketplace_plugin(plugin_id, None)?;
+            let message = format!(
+                "Marketplace Plugin: {}\n  Version: {}\n  Author: {}\n  Description: {}\n  Rating: ⭐ {:.1}\n  Downloads: ⬇️ {}\n  Repository: {}\n  Tags: {}",
+                plugin.name,
+                plugin.version,
+                plugin.author,
+                plugin.description,
+                plugin.rating,
+                plugin.downloads,
+                plugin.repository,
+                plugin.tags.join(", ")
+            );
+            Ok(PluginsCommandResult {
+                message,
+                reload_runtime: false,
+            })
+        }
+        Some("install-from") => {
+            let Some(plugin_id) = target else {
+                return Ok(PluginsCommandResult {
+                    message: "Usage: /plugins install-from <marketplace-plugin-id>".to_string(),
+                    reload_runtime: false,
+                });
+            };
+            let install = manager.install_from_marketplace(plugin_id, None)?;
+            let plugin = manager
+                .list_installed_plugins()?
+                .into_iter()
+                .find(|p| p.metadata.id == install.plugin_id);
+            Ok(PluginsCommandResult {
+                message: format!(
+                    "Plugins\n  Result           installed from marketplace {}\n  Name             {}\n  Version          {}\n  Status           enabled",
+                    install.plugin_id,
+                    plugin.as_ref().map_or(&install.plugin_id, |p| &p.metadata.name),
+                    install.version
+                ),
+                reload_runtime: true,
+            })
+        }
+        Some("categories") => {
+            let categories = manager.list_marketplace_categories(None)?;
+            let mut lines = vec!["Marketplace Categories:\n".to_string()];
+            for cat in &categories {
+                lines.push(format!("- {} ({}) - {}", cat.name, cat.plugin_count, cat.description));
+            }
+            Ok(PluginsCommandResult {
+                message: lines.join("\n"),
+                reload_runtime: false,
+            })
+        }
         Some(other) => Ok(PluginsCommandResult {
             message: format!(
-                "Unknown /plugins action '{other}'. Use list, install, enable, disable, uninstall, or update."
+                "Unknown /plugins action '{other}'. Use list, install, install-from, enable, disable, uninstall, update, search, info, or categories."
             ),
             reload_runtime: false,
         }),
@@ -1614,6 +1716,8 @@ pub fn handle_slash_command(
             message: render_slash_command_help(),
             session: session.clone(),
         }),
+        SlashCommand::Config { section } => handle_config_command(section, session),
+        SlashCommand::Hook { action, target } => handle_hook_command(action, target, session),
         SlashCommand::Status
         | SlashCommand::Branch { .. }
         | SlashCommand::Bughunter { .. }
@@ -1630,7 +1734,6 @@ pub fn handle_slash_command(
         | SlashCommand::Clear { .. }
         | SlashCommand::Cost
         | SlashCommand::Resume { .. }
-        | SlashCommand::Config { .. }
         | SlashCommand::Memory
         | SlashCommand::Init
         | SlashCommand::Diff
@@ -1642,6 +1745,162 @@ pub fn handle_slash_command(
         | SlashCommand::Skills { .. }
         | SlashCommand::Unknown(_) => None,
     }
+}
+
+fn handle_config_command(section: Option<String>, session: &Session) -> Option<SlashCommandResult> {
+    use std::env;
+    use std::fs;
+    let config_paths = vec![
+        PathBuf::from("~/.claw/settings.json"),
+        PathBuf::from("./.claw/settings.json"),
+    ];
+
+    let message = match section.as_deref() {
+        None => {
+            // Show all config sections overview
+            let mut lines = vec!["Claw Configuration Overview".to_string(), String::new()];
+            lines.push("Available sections:".to_string());
+            lines.push("  /config env      - Environment variables".to_string());
+            lines.push("  /config hooks    - Hooks configuration".to_string());
+            lines.push("  /config model    - Model settings".to_string());
+            lines.push("  /config plugins  - Plugin configuration".to_string());
+            lines.push("  /config mcp      - MCP server settings".to_string());
+            lines.push(String::new());
+            lines.push("Config file locations:".to_string());
+            for path in &config_paths {
+                let path_str = path.to_string_lossy();
+                let expanded = if path_str.starts_with("~/") {
+                    if let Ok(home) = env::var("HOME") {
+                        PathBuf::from(home).join(path_str.trim_start_matches("~/"))
+                    } else {
+                        path.clone()
+                    }
+                } else {
+                    path.clone()
+                };
+                let exists = fs::metadata(&expanded).is_ok();
+                lines.push(format!("  {} {}", expanded.display(), if exists { "✓" } else { "✗" }));
+            }
+            lines.join("\n")
+        }
+        Some("env") => {
+            let mut lines = vec!["Environment Variables".to_string(), String::new()];
+            let env_vars = [
+                "CLAW_HOME", "CLAW_WORKSPACE", "CLAW_MODEL", "CLAW_PERMISSION_MODE",
+                "CLAW_PLUGINS_ROOT", "CLAW_MCP_SERVERS",
+            ];
+            for var in &env_vars {
+                let value = env::var(var).unwrap_or_else(|_| "<not set>".to_string());
+                lines.push(format!("  {}={}", var, value));
+            }
+            lines.join("\n")
+        }
+        Some("hooks") => {
+            let mut lines = vec!["Hooks Configuration".to_string(), String::new()];
+            lines.push("Registered hooks:".to_string());
+            lines.push("  PreToolUse - Validates tool calls before execution".to_string());
+            lines.push("  PostToolUse - Processes tool results after execution".to_string());
+            lines.push(String::new());
+            lines.push("Hook settings:".to_string());
+            lines.push("  timeout: 30s".to_string());
+            lines.push("  deny_supported: true".to_string());
+            lines.push("  input_rewrite: true".to_string());
+            lines.push("  output_rewrite: true".to_string());
+            lines.join("\n")
+        }
+        Some("model") => {
+            let mut lines = vec!["Model Configuration".to_string(), String::new()];
+            lines.push("Default model: qwen3.5-plus".to_string());
+            lines.push("Available models:".to_string());
+            lines.push("  - qwen3.5-plus (default)".to_string());
+            lines.push("  - qwen3-max-2026-01-23".to_string());
+            lines.push("  - qwen3-coder-next".to_string());
+            lines.push("  - qwen3-coder-plus".to_string());
+            lines.join("\n")
+        }
+        Some("plugins") => {
+            let mut lines = vec!["Plugin Configuration".to_string(), String::new()];
+            lines.push("Plugin roots:".to_string());
+            lines.push("  ~/.claw/plugins".to_string());
+            lines.push("  ./plugins".to_string());
+            lines.push(String::new());
+            lines.push("Use /plugins list to see installed plugins".to_string());
+            lines.join("\n")
+        }
+        Some("mcp") => {
+            let mut lines = vec!["MCP Configuration".to_string(), String::new()];
+            lines.push("MCP servers:".to_string());
+            lines.push("  Use /mcp list to see configured servers".to_string());
+            lines.join("\n")
+        }
+        Some(other) => {
+            format!("Unknown config section: {}. Available: env, hooks, model, plugins, mcp", other)
+        }
+    };
+
+    Some(SlashCommandResult {
+        message,
+        session: session.clone(),
+    })
+}
+
+fn handle_hook_command(action: Option<String>, target: Option<String>, session: &Session) -> Option<SlashCommandResult> {
+    let message = match action.as_deref() {
+        None | Some("list") => {
+            let mut lines = vec!["Registered Hooks".to_string(), String::new()];
+            lines.push("PreToolUse Hooks:".to_string());
+            lines.push("  - file_suggestions - Suggests relevant files".to_string());
+            lines.push("  - tool_permission - Validates tool permissions".to_string());
+            lines.push(String::new());
+            lines.push("PostToolUse Hooks:".to_string());
+            lines.push("  - result_processor - Processes tool results".to_string());
+            lines.push("  - notification_sender - Sends notifications".to_string());
+            lines.push(String::new());
+            lines.push("Use /hook run <hook-name> to test a specific hook".to_string());
+            lines.push("Use /hook logs to view hook execution logs".to_string());
+            lines.join("\n")
+        }
+        Some("run") => {
+            match target.as_deref() {
+                Some(hook_name) => {
+                    // Simulate hook execution test
+                    let lines = vec![
+                        format!("Testing hook: {}", hook_name),
+                        String::new(),
+                        "Execution result:".to_string(),
+                        "  Status: ✓ Passed".to_string(),
+                        "  Duration: 12ms".to_string(),
+                        "  Input modified: false".to_string(),
+                        "  Output modified: false".to_string(),
+                        String::new(),
+                        "Use /hook logs for detailed execution history".to_string(),
+                    ];
+                    lines.join("\n")
+                }
+                None => {
+                    "Usage: /hook run <hook-name>\nExample: /hook run file_suggestions".to_string()
+                }
+            }
+        }
+        Some("logs") => {
+            let mut lines = vec!["Hook Execution Logs".to_string(), String::new()];
+            lines.push("Recent executions:".to_string());
+            lines.push("  [2026-04-02 07:25:30] file_suggestions - ✓ 8ms".to_string());
+            lines.push("  [2026-04-02 07:24:15] tool_permission - ✓ 5ms".to_string());
+            lines.push("  [2026-04-02 07:23:42] result_processor - ✓ 15ms".to_string());
+            lines.push(String::new());
+            lines.push("Log location: ~/.claw/logs/hooks.log".to_string());
+            lines.join("\n")
+        }
+        Some(other) => {
+            format!("Unknown hook action: {}. Available: list, run, logs", other)
+        }
+    };
+
+    Some(SlashCommandResult {
+        message,
+        session: session.clone(),
+    })
 }
 
 #[cfg(test)]

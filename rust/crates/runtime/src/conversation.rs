@@ -218,8 +218,12 @@ where
                                 true,
                             )
                         } else {
+                            // 应用 PreToolUse 钩子的输入修改
+                            let effective_input = pre_hook_result.modified_input()
+                                .unwrap_or(&input);
+                            
                             let (mut output, mut is_error) =
-                                match self.tool_executor.execute(&tool_name, &input) {
+                                match self.tool_executor.execute(&tool_name, effective_input) {
                                     Ok(output) => (output, false),
                                     Err(error) => (error.to_string(), true),
                                 };
@@ -227,10 +231,16 @@ where
 
                             let post_hook_result = self
                                 .hook_runner
-                                .run_post_tool_use(&tool_name, &input, &output, is_error);
+                                .run_post_tool_use(&tool_name, effective_input, &output, is_error);
                             if post_hook_result.is_denied() {
                                 is_error = true;
                             }
+                            
+                            // 应用 PostToolUse 钩子的输出修改
+                            if let Some(modified_output) = post_hook_result.modified_output() {
+                                output = modified_output.to_string();
+                            }
+                            
                             output = merge_hook_feedback(
                                 post_hook_result.messages(),
                                 output,

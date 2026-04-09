@@ -20,10 +20,12 @@ impl HookEvent {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HookRunResult {
     denied: bool,
     messages: Vec<String>,
+    modified_input: Option<String>,
+    modified_output: Option<String>,
 }
 
 impl HookRunResult {
@@ -32,7 +34,21 @@ impl HookRunResult {
         Self {
             denied: false,
             messages,
+            modified_input: None,
+            modified_output: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_modified_input(mut self, modified_input: String) -> Self {
+        self.modified_input = Some(modified_input);
+        self
+    }
+
+    #[must_use]
+    pub fn with_modified_output(mut self, modified_output: String) -> Self {
+        self.modified_output = Some(modified_output);
+        self
     }
 
     #[must_use]
@@ -43,6 +59,16 @@ impl HookRunResult {
     #[must_use]
     pub fn messages(&self) -> &[String] {
         &self.messages
+    }
+
+    #[must_use]
+    pub fn modified_input(&self) -> Option<&str> {
+        self.modified_input.as_deref()
+    }
+
+    #[must_use]
+    pub fn modified_output(&self) -> Option<&str> {
+        self.modified_output.as_deref()
     }
 }
 
@@ -152,6 +178,8 @@ impl HookRunner {
                     return HookRunResult {
                         denied: true,
                         messages,
+                        modified_input: None,
+                        modified_output: None,
                     };
                 }
                 HookCommandOutcome::Warn { message } => messages.push(message),

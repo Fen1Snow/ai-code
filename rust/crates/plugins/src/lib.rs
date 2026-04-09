@@ -12,6 +12,9 @@ use serde_json::{Map, Value};
 
 pub use hooks::{HookEvent, HookRunResult, HookRunner};
 
+// Plugin Marketplace API
+const DEFAULT_MARKETPLACE_URL: &str = "https://marketplace.clawcode.dev";
+
 const EXTERNAL_MARKETPLACE: &str = "external";
 const BUILTIN_MARKETPLACE: &str = "builtin";
 const BUNDLED_MARKETPLACE: &str = "bundled";
@@ -340,6 +343,175 @@ impl PluginTool {
 
 fn default_tool_permission_label() -> String {
     "danger-full-access".to_string()
+}
+
+// ============== Marketplace API Structures ==============
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MarketplacePluginInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub author: String,
+    pub repository: String,
+    pub downloads: u64,
+    pub rating: f32,
+    pub tags: Vec<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MarketplaceSearchResult {
+    pub total: u64,
+    pub page: u64,
+    pub per_page: u64,
+    pub plugins: Vec<MarketplacePluginInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarketplaceCategory {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub plugin_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MarketplaceError {
+    HttpError(String),
+    ParseError(String),
+    NotFound(String),
+    RateLimited,
+}
+
+impl Display for MarketplaceError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HttpError(msg) => write!(f, "Marketplace HTTP error: {msg}"),
+            Self::ParseError(msg) => write!(f, "Marketplace parse error: {msg}"),
+            Self::NotFound(msg) => write!(f, "Marketplace not found: {msg}"),
+            Self::RateLimited => write!(f, "Marketplace rate limited"),
+        }
+    }
+}
+
+impl std::error::Error for MarketplaceError {}
+
+pub struct MarketplaceClient {
+    base_url: String,
+    client: reqwest::blocking::Client,
+}
+
+impl MarketplaceClient {
+    #[must_use]
+    pub fn new(base_url: Option<&str>) -> Self {
+        Self {
+            base_url: base_url.unwrap_or(DEFAULT_MARKETPLACE_URL).to_string(),
+            client: reqwest::blocking::Client::builder()
+                .user_agent("claw-code-plugins/0.1.0")
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn search(&self, query: &str, page: u64, per_page: u64) -> Result<MarketplaceSearchResult, MarketplaceError> {
+        let url = format!("{}/api/v1/plugins/search", self.base_url);
+        let response = self.client
+            .get(&url)
+            .query(&[
+                ("q", query),
+                ("page", &page.to_string()),
+                ("per_page", &per_page.to_string()),
+            ])
+            .send()
+            .map_err(|e| MarketplaceError::HttpError(e.to_string()))?;
+
+        if response.status() == 429 {
+            return Err(MarketplaceError::RateLimited);
+        }
+
+        if !response.status().is_success() {
+            return Err(MarketplaceError::HttpError(format!(
+                "Status: {}",
+                response.status()
+            )));
+        }
+
+        response
+            .json::<MarketplaceSearchResult>()
+            .map_err(|e| MarketplaceError::ParseError(e.to_string()))
+    }
+
+    pub fn get_plugin(&self, plugin_id: &str) -> Result<MarketplacePluginInfo, MarketplaceError> {
+        let url = format!("{}/api/v1/plugins/{}", self.base_url, plugin_id);
+        let response = self.client
+            .get(&url)
+            .send()
+            .map_err(|e| MarketplaceError::HttpError(e.to_string()))?;
+
+        if response.status() == 404 {
+            return Err(MarketplaceError::NotFound(plugin_id.to_string()));
+        }
+
+        if !response.status().is_success() {
+            return Err(MarketplaceError::HttpError(format!(
+                "Status: {}",
+                response.status()
+            )));
+        }
+
+        response
+            .json::<MarketplacePluginInfo>()
+            .map_err(|e| MarketplaceError::ParseError(e.to_string()))
+    }
+
+    pub fn list_categories(&self) -> Result<Vec<MarketplaceCategory>, MarketplaceError> {
+        let url = format!("{}/api/v1/categories", self.base_url);
+        let response = self.client
+            .get(&url)
+            .send()
+            .map_err(|e| MarketplaceError::HttpError(e.to_string()))?;
+
+        if !response.status().is_success() {
+            return Err(MarketplaceError::HttpError(format!(
+                "Status: {}",
+                response.status()
+            )));
+        }
+
+        response
+            .json::<Vec<MarketplaceCategory>>()
+            .map_err(|e| MarketplaceError::ParseError(e.to_string()))
+    }
+
+    pub fn get_install_url(&self, plugin_id: &str) -> Result<String, MarketplaceError> {
+        let url = format!("{}/api/v1/plugins/{}/install", self.base_url, plugin_id);
+        let response = self.client
+            .get(&url)
+            .send()
+            .map_err(|e| MarketplaceError::HttpError(e.to_string()))?;
+
+        if !response.status().is_success() {
+            return Err(MarketplaceError::HttpError(format!(
+                "Status: {}",
+                response.status()
+            )));
+        }
+
+        #[derive(Deserialize)]
+        struct InstallResponse {
+            git_url: String,
+        }
+
+        let install_resp: InstallResponse = response
+            .json()
+            .map_err(|e| MarketplaceError::ParseError(e.to_string()))?;
+
+        Ok(install_resp.git_url)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1092,6 +1264,60 @@ impl PluginManager {
             new_version: manifest.version,
             install_path: record.install_path,
         })
+    }
+
+    // ============== Marketplace Methods ==============
+
+    #[must_use]
+    pub fn marketplace_client(&self, marketplace_url: Option<&str>) -> MarketplaceClient {
+        MarketplaceClient::new(marketplace_url)
+    }
+
+    pub fn install_from_marketplace(
+        &mut self,
+        plugin_id: &str,
+        marketplace_url: Option<&str>,
+    ) -> Result<InstallOutcome, PluginError> {
+        let client = self.marketplace_client(marketplace_url);
+        let git_url = client
+            .get_install_url(plugin_id)
+            .map_err(|e| PluginError::CommandFailed(format!("Marketplace error: {e}")))?;
+
+        self.install(&git_url)
+    }
+
+    pub fn search_marketplace(
+        &self,
+        query: &str,
+        page: u64,
+        per_page: u64,
+        marketplace_url: Option<&str>,
+    ) -> Result<MarketplaceSearchResult, PluginError> {
+        let client = self.marketplace_client(marketplace_url);
+        client
+            .search(query, page, per_page)
+            .map_err(|e| PluginError::CommandFailed(format!("Marketplace search error: {e}")))
+    }
+
+    pub fn list_marketplace_categories(
+        &self,
+        marketplace_url: Option<&str>,
+    ) -> Result<Vec<MarketplaceCategory>, PluginError> {
+        let client = self.marketplace_client(marketplace_url);
+        client
+            .list_categories()
+            .map_err(|e| PluginError::CommandFailed(format!("Marketplace categories error: {e}")))
+    }
+
+    pub fn get_marketplace_plugin(
+        &self,
+        plugin_id: &str,
+        marketplace_url: Option<&str>,
+    ) -> Result<MarketplacePluginInfo, PluginError> {
+        let client = self.marketplace_client(marketplace_url);
+        client
+            .get_plugin(plugin_id)
+            .map_err(|e| PluginError::NotFound(format!("Marketplace plugin not found: {e}")))
     }
 
     fn discover_installed_plugins(&self) -> Result<Vec<PluginDefinition>, PluginError> {

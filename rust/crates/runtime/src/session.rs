@@ -47,6 +47,14 @@ pub struct ConversationMessage {
 pub struct Session {
     pub version: u32,
     pub messages: Vec<ConversationMessage>,
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub token_count: Option<usize>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -86,6 +94,10 @@ impl Session {
         Self {
             version: 1,
             messages: Vec::new(),
+            id: String::new(),
+            token_count: None,
+            title: None,
+            tags: None,
         }
     }
 
@@ -135,7 +147,14 @@ impl Session {
             .iter()
             .map(ConversationMessage::from_json)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { version, messages })
+        Ok(Self {
+            version,
+            messages,
+            id: String::new(),
+            token_count: None,
+            title: None,
+            tags: None,
+        })
     }
 }
 

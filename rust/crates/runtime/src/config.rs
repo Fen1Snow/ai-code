@@ -422,8 +422,32 @@ impl RuntimePluginConfig {
 pub fn default_config_home() -> PathBuf {
     std::env::var_os("CLAW_CONFIG_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claw")))
+        .or_else(|| home_dir().map(|home| home.join(".claw")))
         .unwrap_or_else(|| PathBuf::from(".claw"))
+}
+
+/// Cross-platform home directory resolution
+fn home_dir() -> Option<PathBuf> {
+    // First check HOME (Unix and some Windows setups)
+    if let Some(home) = std::env::var_os("HOME") {
+        return Some(PathBuf::from(home));
+    }
+    // Windows: check USERPROFILE
+    if let Some(userprofile) = std::env::var_os("USERPROFILE") {
+        return Some(PathBuf::from(userprofile));
+    }
+    // Windows: check HOMEPATH + HOMEDRIVE
+    if let Some(homepath) = std::env::var_os("HOMEPATH") {
+        let homedrive = std::env::var_os("HOMEDRIVE")
+            .map(|d| d.to_string_lossy().to_string())
+            .unwrap_or_else(|| "C:".to_string());
+        return Some(PathBuf::from(format!(
+            "{}{}",
+            homedrive,
+            homepath.to_string_lossy()
+        )));
+    }
+    None
 }
 
 impl RuntimeHookConfig {
@@ -507,7 +531,7 @@ fn read_optional_json_object(
 
     let parsed = match JsonValue::parse(&contents) {
         Ok(parsed) => parsed,
-        Err(error) if is_legacy_config => return Ok(None),
+        Err(_) if is_legacy_config => return Ok(None),
         Err(error) => return Err(ConfigError::Parse(format!("{}: {error}", path.display()))),
     };
     let Some(object) = parsed.as_object() else {

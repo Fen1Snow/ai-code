@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use glob;
 use api::{
     max_tokens_for_model, resolve_model_alias, ContentBlockDelta, InputContentBlock, InputMessage,
     MessageRequest, MessageResponse, OutputContentBlock, ProviderClient,
@@ -533,6 +534,41 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
             }),
             required_permission: PermissionMode::DangerFullAccess,
         },
+        ToolSpec {
+            name: "list_directory",
+            description: "List contents of a directory with optional filtering.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "recursive": { "type": "boolean" },
+                    "pattern": { "type": "string" },
+                    "include_hidden": { "type": "boolean" }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+            required_permission: PermissionMode::ReadOnly,
+        },
+        ToolSpec {
+            name: "image_editor",
+            description: "Edit images: crop, resize, annotate, or apply filters.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "operation": {
+                        "type": "string",
+                        "enum": ["crop", "resize", "annotate", "filter", "convert"]
+                    },
+                    "output_path": { "type": "string" },
+                    "parameters": { "type": "object" }
+                },
+                "required": ["path", "operation"],
+                "additionalProperties": false
+            }),
+            required_permission: PermissionMode::WorkspaceWrite,
+        },
     ]
 }
 
@@ -559,6 +595,8 @@ pub fn execute_tool(name: &str, input: &Value) -> Result<String, String> {
         }
         "REPL" => from_value::<ReplInput>(input).and_then(run_repl),
         "PowerShell" => from_value::<PowerShellInput>(input).and_then(run_powershell),
+        "list_directory" => from_value::<ListDirectoryInput>(input).and_then(run_list_directory),
+        "image_editor" => from_value::<ImageEditorInput>(input).and_then(run_image_editor),
         _ => Err(format!("unsupported tool: {name}")),
     }
 }
@@ -657,6 +695,245 @@ fn run_repl(input: ReplInput) -> Result<String, String> {
 
 fn run_powershell(input: PowerShellInput) -> Result<String, String> {
     to_pretty_json(execute_powershell(input).map_err(|error| error.to_string())?)
+}
+
+fn run_list_directory(input: ListDirectoryInput) -> Result<String, String> {
+    use std::fs;
+    use std::path::Path;
+    use std::time::SystemTime;
+
+    let path = Path::new(&input.path);
+    
+    if !path.exists() {
+        return Err(format!("Path does not exist: {}", input.path));
+    }
+
+    if !path.is_dir() {
+        return Err(format!("Path is not a directory: {}", input.path));
+    }
+
+    let recursive = input.recursive.unwrap_or(false);
+    let pattern = input.pattern;
+    let include_hidden = input.include_hidden.unwrap_or(false);
+
+    let mut entries = Vec::new();
+
+    if recursive {
+        for entry in fs::read_dir(path).map_err(|e| format!("Failed to read directory: {}", e))? {
+            let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+            let entry_path = entry.path();
+            let file_name = entry_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+
+            if !include_hidden && file_name.starts_with('.') {
+                continue;
+            }
+
+            if let Some(ref pat) = pattern {
+                if !file_name.contains(pat) {
+                    continue;
+                }
+            }
+
+            let metadata = entry_path
+                .metadata()
+                .map_err(|e| format!("Failed to read metadata: {}", e))?;
+
+            let entry_type = if metadata.is_dir() { "directory" } else { "file" }.to_string();
+            let size = if metadata.is_file() { Some(metadata.len()) } else { None };
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs().to_string());
+
+            entries.push(DirectoryEntry {
+                name: file_name,
+                entry_type,
+                size,
+                modified,
+            });
+        }
+    } else {
+        let entries_result = if let Some(ref _pat) = pattern {
+            let glob_pattern = if path.ends_with("/") {
+                format!("{}*", input.path)
+            } else {
+                format!("{}/*", input.path)
+            };
+            
+            let mut matched = Vec::new();
+            if let Ok(paths) = glob::glob(&glob_pattern) {
+                for path_result in paths {
+                    if let Ok(p) = path_result {
+                        matched.push(p);
+                    }
+                }
+            }
+            Ok(matched)
+        } else {
+            fs::read_dir(path)
+                .map_err(|e| format!("Failed to read directory: {}", e))
+                .map(|dir| {
+                    dir.filter_map(|e| e.ok())
+                        .map(|e| e.path())
+                        .collect::<Vec<_>>()
+                })
+        };
+
+        let paths = entries_result?;
+        
+        for entry_path in paths {
+            let file_name = entry_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+
+            if !include_hidden && file_name.starts_with('.') {
+                continue;
+            }
+
+            let metadata = entry_path
+                .metadata()
+                .map_err(|e| format!("Failed to read metadata: {}", e))?;
+
+            let entry_type = if metadata.is_dir() { "directory" } else { "file" }.to_string();
+            let size = if metadata.is_file() { Some(metadata.len()) } else { None };
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs().to_string());
+
+            entries.push(DirectoryEntry {
+                name: file_name,
+                entry_type,
+                size,
+                modified,
+            });
+        }
+    }
+
+    entries.sort_by(|a, b| {
+        let type_order = b.entry_type.cmp(&a.entry_type);
+        if type_order == std::cmp::Ordering::Equal {
+            a.name.cmp(&b.name)
+        } else {
+            type_order
+        }
+    });
+
+    let output = ListDirectoryOutput {
+        path: input.path,
+        total_count: entries.len(),
+        entries,
+    };
+
+    to_pretty_json(output)
+}
+
+fn run_image_editor(input: ImageEditorInput) -> Result<String, String> {
+    use std::path::Path;
+    use std::process::Command;
+
+    let input_path = Path::new(&input.path);
+    
+    if !input_path.exists() {
+        return Err(format!("Image file does not exist: {}", input.path));
+    }
+
+    let output_path = input.output_path.unwrap_or_else(|| {
+        let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+        let ext = input_path.extension().and_then(|s| s.to_str()).unwrap_or("png");
+        format!("{}_edited.{}", stem, ext)
+    });
+
+    let operation = input.operation.to_lowercase();
+    let parameters = input.parameters.unwrap_or_default();
+
+    let mut args = vec![input.path.clone()];
+
+    match operation.as_str() {
+        "crop" => {
+            let x = parameters.get("x").and_then(|v| v.as_u64()).unwrap_or(0);
+            let y = parameters.get("y").and_then(|v| v.as_u64()).unwrap_or(0);
+            let width = parameters.get("width").and_then(|v| v.as_u64()).unwrap_or(100);
+            let height = parameters.get("height").and_then(|v| v.as_u64()).unwrap_or(100);
+            args.push("-crop".to_string());
+            args.push(format!("{}x{}+{}+{}", width, height, x, y));
+        }
+        "resize" => {
+            let width = parameters.get("width").and_then(|v| v.as_u64()).unwrap_or(800);
+            let height = parameters.get("height").and_then(|v| v.as_u64()).unwrap_or(600);
+            args.push("-resize".to_string());
+            args.push(format!("{}x{}", width, height));
+        }
+        "annotate" => {
+            let text = parameters.get("text").and_then(|v| v.as_str()).unwrap_or("Annotation");
+            let gravity = parameters.get("gravity").and_then(|v| v.as_str()).unwrap_or("center");
+            args.push("-gravity".to_string());
+            args.push(gravity.to_string());
+            args.push("-pointsize".to_string());
+            args.push("24".to_string());
+            args.push("-annotate".to_string());
+            args.push(format!("+0+0 {}", text));
+        }
+        "filter" => {
+            let filter = parameters.get("filter").and_then(|v| v.as_str()).unwrap_or("blur");
+            match filter {
+                "blur" => {
+                    args.push("-blur".to_string());
+                    args.push("0x2".to_string());
+                }
+                "sharpen" => {
+                    args.push("-sharpen".to_string());
+                    args.push("0x2".to_string());
+                }
+                "grayscale" => {
+                    args.push("-colorspace".to_string());
+                    args.push("Gray".to_string());
+                }
+                _ => return Err(format!("Unknown filter: {}", filter)),
+            }
+        }
+        "convert" => {
+            let _format = parameters.get("format").and_then(|v| v.as_str()).unwrap_or("png");
+        }
+        _ => return Err(format!("Unknown operation: {}", operation)),
+    }
+
+    args.push(output_path.clone());
+
+    let result = Command::new("convert").args(&args).output();
+
+    match result {
+        Ok(output) => {
+            if output.status.success() {
+                let message = format!(
+                    "Image {} completed successfully. Output: {}",
+                    operation, output_path
+                );
+                to_pretty_json(ImageEditorOutput {
+                    operation,
+                    input_path: input.path,
+                    output_path,
+                    success: true,
+                    message,
+                })
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(format!("ImageMagick convert failed: {}", stderr))
+            }
+        }
+        Err(e) => Err(format!(
+            "ImageMagick 'convert' command not found. Please install ImageMagick. Error: {}",
+            e
+        )),
+    }
 }
 
 fn to_pretty_json<T: serde::Serialize>(value: T) -> Result<String, String> {
@@ -824,6 +1101,47 @@ struct PowerShellInput {
     timeout: Option<u64>,
     description: Option<String>,
     run_in_background: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListDirectoryInput {
+    path: String,
+    recursive: Option<bool>,
+    pattern: Option<String>,
+    include_hidden: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImageEditorInput {
+    path: String,
+    operation: String,
+    output_path: Option<String>,
+    parameters: Option<BTreeMap<String, Value>>,
+}
+
+#[derive(Debug, Serialize)]
+struct ListDirectoryOutput {
+    path: String,
+    entries: Vec<DirectoryEntry>,
+    total_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct DirectoryEntry {
+    name: String,
+    #[serde(rename = "type")]
+    entry_type: String,
+    size: Option<u64>,
+    modified: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ImageEditorOutput {
+    operation: String,
+    input_path: String,
+    output_path: String,
+    success: bool,
+    message: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -2762,8 +3080,30 @@ fn config_home_dir() -> Result<PathBuf, String> {
     if let Ok(path) = std::env::var("CLAW_CONFIG_HOME") {
         return Ok(PathBuf::from(path));
     }
-    let home = std::env::var("HOME").map_err(|_| String::from("HOME is not set"))?;
-    Ok(PathBuf::from(home).join(".claw"))
+    let home = home_dir().ok_or_else(|| String::from("Could not determine home directory"))?;
+    Ok(home.join(".claw"))
+}
+
+/// Cross-platform home directory resolution
+fn home_dir() -> Option<PathBuf> {
+    // First check explicit environment variables
+    if let Ok(path) = std::env::var("CLAW_HOME") {
+        return Some(PathBuf::from(path));
+    }
+    if let Ok(path) = std::env::var("HOME") {
+        return Some(PathBuf::from(path));
+    }
+    // Windows: check USERPROFILE
+    if let Ok(path) = std::env::var("USERPROFILE") {
+        return Some(PathBuf::from(path));
+    }
+    // Windows: check HOMEPATH + HOMEDRIVE
+    if let Ok(homepath) = std::env::var("HOMEPATH") {
+        let homedrive = std::env::var("HOMEDRIVE").unwrap_or_else(|_| "C:".to_string());
+        return Some(PathBuf::from(format!("{}{}", homedrive, homepath)));
+    }
+    // Fallback: use dirs crate if available, otherwise None
+    None
 }
 
 fn read_json_object(path: &Path) -> Result<serde_json::Map<String, Value>, String> {

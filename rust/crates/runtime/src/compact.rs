@@ -125,6 +125,10 @@ pub fn compact_session(session: &Session, config: CompactionConfig) -> Compactio
         compacted_session: Session {
             version: session.version,
             messages: compacted_messages,
+            id: session.id.clone(),
+            token_count: None,
+            title: session.title.clone(),
+            tags: session.tags.clone(),
         },
         removed_message_count: removed.len(),
     }
@@ -518,6 +522,10 @@ mod tests {
         let session = Session {
             version: 1,
             messages: vec![ConversationMessage::user_text("hello")],
+            id: String::new(),
+            token_count: None,
+            title: None,
+            tags: None,
         };
 
         let result = compact_session(&session, CompactionConfig::default());
@@ -545,6 +553,10 @@ mod tests {
                     usage: None,
                 },
             ],
+            id: String::new(),
+            token_count: None,
+            title: None,
+            tags: None,
         };
 
         let result = compact_session(
@@ -594,6 +606,10 @@ mod tests {
                     text: "Next: preserve prior summary context during auto compact.".to_string(),
                 }]),
             ],
+            id: String::new(),
+            token_count: None,
+            title: None,
+            tags: None,
         };
         let config = CompactionConfig {
             preserve_recent_messages: 2,
@@ -613,6 +629,10 @@ mod tests {
             &Session {
                 version: 1,
                 messages: follow_up_messages,
+                id: String::new(),
+                token_count: None,
+                title: None,
+                tags: None,
             },
             config,
         );
@@ -659,6 +679,10 @@ mod tests {
                     text: "recent".to_string(),
                 }]),
             ],
+            id: String::new(),
+            token_count: None,
+            title: None,
+            tags: None,
         };
 
         assert!(!should_compact(
