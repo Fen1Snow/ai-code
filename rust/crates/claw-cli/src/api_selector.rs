@@ -81,6 +81,8 @@ impl ApiProvider {
                 env::set_var("OPENAI_BASE_URL", base_url);
                 env::set_var("OPENAI_API_KEY", api_key);
                 env::set_var("OPENAI_MODEL", model);
+                // Also set as default model for the runtime
+                env::set_var("CLAW_DEFAULT_MODEL", model);
             }
             Self::Ollama { base_url, model } => {
                 env::set_var("OPENAI_BASE_URL", base_url);

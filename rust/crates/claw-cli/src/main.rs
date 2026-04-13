@@ -43,6 +43,13 @@ use serde_json::json;
 use tools::GlobalToolRegistry;
 
 const DEFAULT_MODEL: &str = "claude-opus-4-6";
+
+fn get_default_model() -> String {
+    std::env::var("CLAW_DEFAULT_MODEL")
+        .or_else(|_| std::env::var("OPENAI_MODEL"))
+        .or_else(|_| std::env::var("ANTHROPIC_MODEL"))
+        .unwrap_or_else(|_| DEFAULT_MODEL.to_string())
+}
 fn max_tokens_for_model(model: &str) -> u32 {
     if model.contains("opus") {
         32_000
@@ -171,7 +178,7 @@ impl CliOutputFormat {
 
 #[allow(clippy::too_many_lines)]
 fn parse_args(args: &[String]) -> Result<CliAction, String> {
-    let mut model = DEFAULT_MODEL.to_string();
+    let mut model = get_default_model();
     let mut output_format = CliOutputFormat::Text;
     let mut permission_mode = default_permission_mode();
     let mut wants_version = false;
