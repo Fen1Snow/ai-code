@@ -20,6 +20,7 @@ use api::{
     resolve_startup_auth_source, ClawApiClient, AuthSource, ContentBlockDelta, InputContentBlock,
     InputMessage, MessageRequest, MessageResponse, OutputContentBlock,
     StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition, ToolResultContentBlock,
+    OpenAiCompatClient, OpenAiCompatConfig,
 };
 
 use commands::{
@@ -2886,9 +2887,15 @@ impl runtime::PermissionPrompter for CliPermissionPrompter {
     }
 }
 
+#[derive(Debug)]
+enum RuntimeProvider {
+    Claw(ClawApiClient),
+    OpenAi(OpenAiCompatClient),
+}
+
 struct DefaultRuntimeClient {
     runtime: tokio::runtime::Runtime,
-    client: ClawApiClient,
+    provider: RuntimeProvider,
     model: String,
     enable_tools: bool,
     emit_output: bool,
@@ -2906,10 +2913,24 @@ impl DefaultRuntimeClient {
         tool_registry: GlobalToolRegistry,
         progress_reporter: Option<InternalPromptProgressReporter>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        let runtime = tokio::runtime::Runtime::new()?;
+        
+        // Check if OpenAI is configured
+        let provider = if std::env::var("OPENAI_API_KEY").is_ok() && std::env::var("OPENAI_MODEL").is_ok() {
+            let base_url = std::env::var("OPENAI_BASE_URL")
+                .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+            let api_key = std::env::var("OPENAI_API_KEY").unwrap();
+            RuntimeProvider::OpenAi(OpenAiCompatClient::new(api_key, OpenAiCompatConfig::openai()).with_base_url(base_url))
+        } else {
+            RuntimeProvider::Claw(
+                ClawApiClient::from_auth(resolve_cli_auth_source()?)
+                    .with_base_url(api::read_base_url())
+            )
+        };
+        
         Ok(Self {
-            runtime: tokio::runtime::Runtime::new()?,
-            client: ClawApiClient::from_auth(resolve_cli_auth_source()?)
-                .with_base_url(api::read_base_url()),
+            runtime,
+            provider,
             model,
             enable_tools,
             emit_output,
@@ -2921,6 +2942,12 @@ impl DefaultRuntimeClient {
 }
 
 fn resolve_cli_auth_source() -> Result<AuthSource, Box<dyn std::error::Error>> {
+    // First check if OpenAI is configured (OPENAI_API_KEY + OPENAI_MODEL)
+    if std::env::var("OPENAI_API_KEY").is_ok() && std::env::var("OPENAI_MODEL").is_ok() {
+        // OpenAI is configured, return None auth (will be handled by provider detection)
+        return Ok(AuthSource::None);
+    }
+    
     Ok(resolve_startup_auth_source(|| {
         let cwd = env::current_dir().map_err(api::ApiError::from)?;
         let config = ConfigLoader::default_for(&cwd).load().map_err(|error| {
@@ -2949,11 +2976,18 @@ impl ApiClient for DefaultRuntimeClient {
         };
 
         self.runtime.block_on(async {
-            let mut stream = self
-                .client
-                .stream_message(&message_request)
-                .await
-                .map_err(|error| RuntimeError::new(error.to_string()))?;
+            // Use the appropriate provider based on configuration
+            let stream = match &self.provider {
+                RuntimeProvider::Claw(client) => {
+                    client.stream_message(&message_request).await
+                        .map(|s| api::MessageStream::ClawApi(s))
+                }
+                RuntimeProvider::OpenAi(client) => {
+                    client.stream_message(&message_request).await
+                        .map(|s| api::MessageStream::OpenAiCompat(s))
+                }
+            };
+            let mut stream = stream.map_err(|error| RuntimeError::new(error.to_string()))?;
             let mut stdout = io::stdout();
             let mut sink = io::sink();
             let out: &mut dyn Write = if self.emit_output {
@@ -3062,14 +3096,22 @@ impl ApiClient for DefaultRuntimeClient {
                 return Ok(events);
             }
 
-            let response = self
-                .client
-                .send_message(&MessageRequest {
-                    stream: false,
-                    ..message_request.clone()
-                })
-                .await
-                .map_err(|error| RuntimeError::new(error.to_string()))?;
+            // Fallback to non-streaming if needed
+            let response = match &self.provider {
+                RuntimeProvider::Claw(client) => {
+                    client.send_message(&MessageRequest {
+                        stream: false,
+                        ..message_request.clone()
+                    }).await
+                }
+                RuntimeProvider::OpenAi(client) => {
+                    client.send_message(&MessageRequest {
+                        stream: false,
+                        ..message_request.clone()
+                    }).await
+                }
+            };
+            let response = response.map_err(|error| RuntimeError::new(error.to_string()))?;
             response_to_events(response, out)
         })
     }

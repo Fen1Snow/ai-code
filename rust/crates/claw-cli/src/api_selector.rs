@@ -100,10 +100,19 @@ pub mod defaults {
 }
 
 pub fn has_existing_config() -> bool {
-    env::var("ANTHROPIC_API_KEY").is_ok()
-        || env::var("ANTHROPIC_AUTH_TOKEN").is_ok()
-        || env::var("OPENAI_API_KEY").is_ok()
-        || env::var("XAI_API_KEY").is_ok()
+    // Check for Anthropic/Claw credentials
+    if env::var("ANTHROPIC_API_KEY").is_ok() || env::var("ANTHROPIC_AUTH_TOKEN").is_ok() {
+        return true;
+    }
+    // Check for OpenAI credentials with model set (indicates configured for OpenAI)
+    if env::var("OPENAI_API_KEY").is_ok() && env::var("OPENAI_MODEL").is_ok() {
+        return true;
+    }
+    // Check for xAI credentials
+    if env::var("XAI_API_KEY").is_ok() {
+        return true;
+    }
+    false
 }
 
 #[allow(dead_code)]
