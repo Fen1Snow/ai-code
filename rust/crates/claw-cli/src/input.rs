@@ -64,11 +64,7 @@ impl EditSession {
         Self {
             text: String::new(),
             cursor: 0,
-            mode: if vim_enabled {
-                EditorMode::Insert
-            } else {
-                EditorMode::Plain
-            },
+            mode: EditorMode::Plain,
             pending_operator: None,
             visual_anchor: None,
             command_buffer: String::new(),
