@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-04-16
+
+### Fixed
+- Fixed Backspace key for both SSH (MobaXterm) and local terminal
+- Removed stty configuration from run_claw.sh to avoid breaking local terminal
+- ^H (ASCII 8) handling in input.rs works universally for all terminal types
+
 ## [0.3.1] - 2026-04-16
 
 ### Fixed
