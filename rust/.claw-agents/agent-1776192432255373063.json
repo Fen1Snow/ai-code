@@ -1,0 +1,14 @@
+{
+  "agentId": "agent-1776192432255373063",
+  "name": "verify-the-branch",
+  "description": "Verify the branch",
+  "subagentType": "Explore",
+  "model": "claude-opus-4-6",
+  "status": "failed",
+  "outputFile": "/mnt/data/rust/dome/ai-code/rust/.claw-agents/agent-1776192432255373063.md",
+  "manifestFile": "/mnt/data/rust/dome/ai-code/rust/.claw-agents/agent-1776192432255373063.json",
+  "createdAt": "1776192432",
+  "startedAt": "1776192432",
+  "completedAt": "1776192432",
+  "error": "missing Claw credentials; export ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY before calling the Claw API"
+}
