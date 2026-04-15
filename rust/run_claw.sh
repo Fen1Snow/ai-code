@@ -41,11 +41,5 @@ fi
 # Set default model if not specified
 : "${OPENAI_MODEL:=gpt-4o}"
 
-# Fix terminal settings for Backspace/Delete keys
-# This ensures Backspace sends ^? instead of ^H
-if [ -t 0 ]; then
-    stty erase '^?' 2>/dev/null || true
-fi
-
 # Run the binary
 exec "$BINARY_PATH" "$@"

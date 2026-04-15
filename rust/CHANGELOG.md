@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `set_text_from_history` to not change mode when vim is disabled
 - This ensures characters are inserted directly instead of being interpreted as vim commands
 - Added ^H (ASCII 8) handling as Backspace for terminal compatibility
-- Added stty configuration in run_claw.sh to fix Backspace key sending ^H issue
+- Fixed Backspace key issue for both SSH (MobaXterm) and local terminal
+- Removed stty configuration to avoid breaking local terminal behavior
 
 ## [0.4.0] - Planned
 
