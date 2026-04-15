@@ -64,7 +64,13 @@ impl EditSession {
         Self {
             text: String::new(),
             cursor: 0,
-            mode: EditorMode::Plain,
+            // When vim is enabled, start in Insert mode for text entry
+            // When vim is disabled, use Plain mode (simple editor)
+            mode: if vim_enabled {
+                EditorMode::Insert
+            } else {
+                EditorMode::Plain
+            },
             pending_operator: None,
             visual_anchor: None,
             command_buffer: String::new(),
@@ -101,7 +107,9 @@ impl EditSession {
         self.cursor = self.text.len();
         self.pending_operator = None;
         self.visual_anchor = None;
-        if self.mode != EditorMode::Plain && self.mode != EditorMode::Insert {
+        // Don't change mode when vim is disabled (keep Plain mode)
+        // When vim is enabled, switch to Normal mode if currently in Visual/Command mode
+        if matches!(self.mode, EditorMode::Visual | EditorMode::Command) {
             self.mode = EditorMode::Normal;
         }
     }
