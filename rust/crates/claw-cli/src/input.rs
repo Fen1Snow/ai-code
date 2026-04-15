@@ -433,7 +433,13 @@ impl LineEditor {
                 KeyAction::Continue
             }
             KeyCode::Char(ch) => {
-                self.handle_char(session, ch);
+                // Handle ^H (ASCII 8) as Backspace for terminal compatibility
+                // Some terminals send ^H instead of ^? for Backspace key
+                if ch == '\x08' {
+                    self.handle_backspace(session);
+                } else {
+                    self.handle_char(session, ch);
+                }
                 KeyAction::Continue
             }
             _ => KeyAction::Continue,

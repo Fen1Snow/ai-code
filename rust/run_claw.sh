@@ -1,5 +1,5 @@
 #!/bin/bash
-# AI-Code v0.3.0 - One-click launcher for Linux
+# AI-Code v0.3.1 - One-click launcher for Linux
 # Based on Claw-Code (https://github.com/instructkr/claw-code)
 #
 # Usage:
@@ -40,6 +40,12 @@ fi
 
 # Set default model if not specified
 : "${OPENAI_MODEL:=gpt-4o}"
+
+# Fix terminal settings for Backspace/Delete keys
+# This ensures Backspace sends ^? instead of ^H
+if [ -t 0 ]; then
+    stty erase '^?' 2>/dev/null || true
+fi
 
 # Run the binary
 exec "$BINARY_PATH" "$@"

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-04-16
+
+### Fixed
+- Fixed delete key appearing as 'h' character when vim mode is disabled
+- Changed default editor mode from Insert to Plain when vim is disabled
+- Fixed `set_text_from_history` to not change mode when vim is disabled
+- This ensures characters are inserted directly instead of being interpreted as vim commands
+- Added ^H (ASCII 8) handling as Backspace for terminal compatibility
+- Added stty configuration in run_claw.sh to fix Backspace key sending ^H issue
+
 ## [0.4.0] - Planned
 
 ### Added
