@@ -4252,7 +4252,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "help", "status", "compact", "clear", "cost", "config", "memory", "init", "diff",
+                "help", "status", "compact", "clear", "cost", "config", "hook", "memory", "init", "diff",
                 "version", "export", "agents", "skills",
             ]
         );

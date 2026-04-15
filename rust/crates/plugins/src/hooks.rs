@@ -508,20 +508,21 @@ mod tests {
 
         let runner = HookRunner::from_registry(&registry).expect("plugin hooks should load");
 
-        assert_eq!(
-            runner.run_pre_tool_use("Read", r#"{"path":"README.md"}"#),
-            HookRunResult::allow(vec![
-                "plugin pre one".to_string(),
-                "plugin pre two".to_string(),
-            ])
-        );
-        assert_eq!(
-            runner.run_post_tool_use("Read", r#"{"path":"README.md"}"#, "ok", false),
-            HookRunResult::allow(vec![
-                "plugin post one".to_string(),
-                "plugin post two".to_string(),
-            ])
-        );
+        let pre_result = runner.run_pre_tool_use("Read", r#"{"path":"README.md"}"#);
+        assert!(!pre_result.denied);
+        assert_eq!(pre_result.messages, vec![
+            "plugin pre one".to_string(),
+            "plugin pre two".to_string(),
+        ]);
+        assert_eq!(pre_result.execution_logs.len(), 2);
+
+        let post_result = runner.run_post_tool_use("Read", r#"{"path":"README.md"}"#, "ok", false);
+        assert!(!post_result.denied);
+        assert_eq!(post_result.messages, vec![
+            "plugin post one".to_string(),
+            "plugin post two".to_string(),
+        ]);
+        assert_eq!(post_result.execution_logs.len(), 2);
 
         let _ = fs::remove_dir_all(config_home);
         let _ = fs::remove_dir_all(first_source_root);

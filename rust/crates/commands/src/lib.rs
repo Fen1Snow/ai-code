@@ -2255,8 +2255,8 @@ mod tests {
         assert!(help.contains("aliases: /plugins, /marketplace"));
         assert!(help.contains("/agents"));
         assert!(help.contains("/skills"));
-        assert_eq!(slash_command_specs().len(), 28);
-        assert_eq!(resume_supported_slash_commands().len(), 13);
+        assert_eq!(slash_command_specs().len(), 29);
+        assert_eq!(resume_supported_slash_commands().len(), 14);
     }
 
     #[test]
@@ -2273,6 +2273,10 @@ mod tests {
                     text: "recent".to_string(),
                 }]),
             ],
+            id: String::new(),
+            token_count: None,
+            title: None,
+            tags: None,
         };
 
         let result = handle_slash_command(
@@ -2352,9 +2356,9 @@ mod tests {
             CompactionConfig::default()
         )
         .is_none());
-        assert!(handle_slash_command("/config", &session, CompactionConfig::default()).is_none());
+        assert!(handle_slash_command("/config", &session, CompactionConfig::default()).is_some());
         assert!(
-            handle_slash_command("/config env", &session, CompactionConfig::default()).is_none()
+            handle_slash_command("/config env", &session, CompactionConfig::default()).is_some()
         );
         assert!(handle_slash_command("/diff", &session, CompactionConfig::default()).is_none());
         assert!(handle_slash_command("/version", &session, CompactionConfig::default()).is_none());
