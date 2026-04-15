@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - Planned
+
+### Added
+- Project memory files (`.ai-code/memory/`) for per-project independent memory
+- DevOps interface preservation across sessions
+- Memory isolation between different projects
+- Memory sync and export/import functionality
+
+### Changed
+- Improved memory management architecture
+- Enhanced project context awareness
+
 ## [0.3.0] - 2026-04-16
 
 ### Added
