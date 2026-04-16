@@ -324,11 +324,18 @@ fn build_assistant_message(
 
     if !finished {
         return Err(RuntimeError::new(
-            "assistant stream ended without a message stop event",
+            "assistant stream ended without a message stop event - this may indicate an API response format issue or network interruption",
         ));
     }
     if blocks.is_empty() {
-        return Err(RuntimeError::new("assistant stream produced no content"));
+        return Err(RuntimeError::new(
+            "assistant stream produced no content - the API returned an empty response. This may be caused by: \
+            1) Invalid API key or insufficient credits, \
+            2) Model not available or rate limited, \
+            3) Request filtered by content policy, \
+            4) API endpoint misconfiguration. \
+            Please check your OPENAI_API_KEY and OPENAI_BASE_URL settings.",
+        ));
     }
 
     Ok((
